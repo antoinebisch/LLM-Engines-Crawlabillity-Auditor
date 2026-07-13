@@ -391,11 +391,7 @@ function showHomeView({ updateHistory = false, focusUrlInput = true } = {}) {
     clearInput();
     if (updateHistory) {
         const currentView = history.state?.view;
-        if (currentView === 'results') {
-            history.back();
-            return;
-        }
-        setAppHistoryState('home', { replace: currentView === 'home' });
+        setAppHistoryState('home', { replace: currentView === 'results' || currentView === 'home' });
     }
 
     if (focusUrlInput) {
