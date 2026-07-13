@@ -1469,6 +1469,11 @@ function clearInput() {
 
 
 
+// Expose functions called via inline onclick handlers in index.html
+// (required because auditor.js is loaded as type="module" which scopes all declarations)
+window.analyzeContent = analyzeContent;
+window.clearInput = clearInput;
+
 // Add CSS class for screen reader only content
 const style = document.createElement('style');
 style.textContent = `.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border-width: 0; }

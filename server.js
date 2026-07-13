@@ -207,19 +207,17 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // Bookmarklet script
+    // Bookmarklet script — dynamically inject the correct base URL from the request host
     if (pathname === '/bookmarklet.js') {
         res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-        fs.readFile(path.join(__dirname, 'bookmarklet.js'), (err, data) => {
-            if (err) {
-                console.error('Error reading bookmarklet.js:', err);
-                res.writeHead(500);
-                res.end('Internal Server Error');
-            } else {
-                res.writeHead(200);
-                res.end(data);
-            }
-        });
+        const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+        const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000';
+        const baseUrl = `${proto}://${host}`;
+        const bookmarkletContent =
+            `(function(){var u=${JSON.stringify(baseUrl + '/?url=')}+encodeURIComponent(location.href);` +
+            `var w=window.open(u,'_blank','noopener,noreferrer');if(!w){window.location.href=u;}})()`;
+        res.writeHead(200);
+        res.end(bookmarkletContent);
         return;
     }
 
