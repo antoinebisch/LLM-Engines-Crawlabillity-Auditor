@@ -747,6 +747,52 @@
         }
         .csv-download-btn:hover { background: #1e40af; }
         .csv-download-btn:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+
+        .bookmarklet-default {
+            display: block;
+        }
+        .bookmarklet-home {
+            display: none;
+        }
+        .home-return-btn {
+            display: none;
+        }
+        .container.results-showing .bookmarklet-default {
+            display: none;
+        }
+        .container.results-showing .bookmarklet-home {
+            display: block;
+        }
+        .container.results-showing #bookmarkletLink {
+            display: none;
+        }
+        .container.results-showing .home-return-btn {
+            display: inline-flex;
+        }
+
+        .home-return-btn {
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.85rem 1.35rem;
+            border-radius: 0.75rem;
+            border: none;
+            background: #ffffff;
+            color: #4f46e5;
+            font-weight: 700;
+            font-size: 1rem;
+            cursor: pointer;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+        }
+        .home-return-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 26px rgba(0,0,0,0.2);
+            background: #f8fafc;
+        }
+        .home-return-btn:focus-visible {
+            outline: 2px solid #93c5fd;
+            outline-offset: 2px;
+        }
     </style>
 </head>
 <body>
@@ -757,12 +803,17 @@
         </header>
 
         <section class="bookmarklet-section">
-            <div>
+            <div class="bookmarklet-default">
                 <strong>🔖 One-click audit from any page</strong>
                 <p>Drag the button to your bookmarks bar. Then click it on any webpage to instantly audit it — no copy-pasting needed.</p>
             </div>
+            <div class="bookmarklet-home">
+                <strong>🏠 Return to the home page</strong>
+                <p>Go back to the default loading screen to run another audit from a URL, file, or pasted HTML.</p>
+            </div>
             <div class="bookmarklet-actions">
-                <a id="bookmarkletLink" href="#" class="btn btn-primary" draggable="true">🔍 Audit This Page</a>
+                <a id="bookmarkletLink" href="__BOOKMARKLET_HREF__" class="btn btn-primary" draggable="true">🔍 Audit This Page</a>
+                <button id="homeReturnBtn" type="button" class="home-return-btn">← Back to home page</button>
             </div>
         </section>
 
@@ -788,8 +839,8 @@
                 </div>
 
                 <div class="button-group">
-                    <button class="btn-analyze" id="analyzeBtn" onclick="analyzeContent()">Analyze Crawlability</button>
-                    <button class="btn-clear" onclick="clearInput()">Clear</button>
+                    <button class="btn-analyze" id="analyzeBtn">Analyze Crawlability</button>
+                    <button class="btn-clear" id="clearBtn">Clear</button>
                 </div>
                 
                 <div id="loadingIndicator" aria-live="polite" aria-atomic="true">

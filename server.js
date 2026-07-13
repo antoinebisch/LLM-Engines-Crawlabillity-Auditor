@@ -1,15 +1,16 @@
 const http = require('http');
 const https = require('https');
 const zlib = require('zlib');
-const url = require('url');
 const path = require('path');
 const fs = require('fs');
 
 const PORT = 3000;
 
-// Temporary in-memory store for bookmarklet-submitted pages
-const pageStore = {};
-let storeCounter = 0;
+function escapeForSingleQuotedJsString(value) {
+    return String(value)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'");
+}
 
 /**
  * Modern fetch with proper decompression and error handling
@@ -57,10 +58,13 @@ function fetchUrl(targetUrl, callback, redirectCount = 0, retryCount = 0) {
 
             const encoding = res.headers['content-encoding'] || '';
             const chunks = [];
+            let totalSize = 0;
 
             res.on('data', chunk => {
-                let totalSize = chunks.reduce((sum, c) => sum + c.length, 0);
-                if (totalSize < MAX_SIZE) chunks.push(chunk);
+                if (totalSize < MAX_SIZE) {
+                    chunks.push(chunk);
+                    totalSize += chunk.length;
+                }
             });
 
             res.on('end', () => {
@@ -146,17 +150,27 @@ function fetchUrl(targetUrl, callback, redirectCount = 0, retryCount = 0) {
 function setSecurityHeaders(res) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+}
+
+function setNoCacheHeaders(res) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+}
+
+function setAssetCacheHeaders(res) {
+    res.setHeader('Cache-Control', 'public, max-age=300');
 }
 
 /**
  * Modern HTTP server with proper error handling
  */
 const server = http.createServer((req, res) => {
-    const parsed = url.parse(req.url, true);
-    const pathname = parsed.pathname;
+    const reqHost = req.headers.host || `localhost:${PORT}`;
+    const requestUrl = new URL(req.url || '/', `http://${reqHost}`);
+    const pathname = requestUrl.pathname;
     
     // CORS headers for cross-origin requests
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -166,8 +180,8 @@ const server = http.createServer((req, res) => {
     // Security headers
     setSecurityHeaders(res);
     
-    // Cache headers for static assets
-    res.setHeader('Cache-Control', 'public, max-age=3600');
+    // Default to no-cache; routes can override for static assets
+    setNoCacheHeaders(res);
 
     if (req.method === 'OPTIONS') {
         res.writeHead(200);
@@ -178,14 +192,21 @@ const server = http.createServer((req, res) => {
     // Home page
     if (pathname === '/' || pathname === '/index.html') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        setNoCacheHeaders(res);
         fs.readFile(path.join(__dirname, 'index.html'), (err, data) => {
             if (err) {
                 console.error('Error reading index.html:', err);
                 res.writeHead(500);
                 res.end('Internal Server Error');
             } else {
+                const proto = (req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http')).split(',')[0].trim();
+                const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
+                const baseUrl = `${proto}://${host}`;
+                const bookmarkletContent =
+                    `(function(){var u='${escapeForSingleQuotedJsString(baseUrl + '/?url=')}'+encodeURIComponent(location.href);` +
+                    `window.location.href=u;})()`;
                 res.writeHead(200);
-                res.end(data);
+                res.end(String(data).replace('__BOOKMARKLET_HREF__', bookmarkletContent));
             }
         });
         return;
@@ -194,6 +215,7 @@ const server = http.createServer((req, res) => {
     // Auditor script
     if (pathname === '/auditor.js') {
         res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        setAssetCacheHeaders(res);
         fs.readFile(path.join(__dirname, 'auditor.js'), (err, data) => {
             if (err) {
                 console.error('Error reading auditor.js:', err);
@@ -210,12 +232,13 @@ const server = http.createServer((req, res) => {
     // Bookmarklet script — dynamically inject the correct base URL from the request host
     if (pathname === '/bookmarklet.js') {
         res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        setNoCacheHeaders(res);
         const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
         const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000';
         const baseUrl = `${proto}://${host}`;
         const bookmarkletContent =
-            `(function(){var u=${JSON.stringify(baseUrl + '/?url=')}+encodeURIComponent(location.href);` +
-            `var w=window.open(u,'_blank','noopener,noreferrer');if(!w){window.location.href=u;}})()`;
+            `(function(){var u='${escapeForSingleQuotedJsString(baseUrl + '/?url=')}'+encodeURIComponent(location.href);` +
+            `window.location.href=u;})()`;
         res.writeHead(200);
         res.end(bookmarkletContent);
         return;
@@ -224,7 +247,8 @@ const server = http.createServer((req, res) => {
     // API: Fetch remote URL
     if (pathname === '/api/fetch' && req.method === 'GET') {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        const targetUrl = parsed.query.url;
+        setNoCacheHeaders(res);
+        const targetUrl = requestUrl.searchParams.get('url');
         
         if (!targetUrl) {
             res.writeHead(400);
@@ -277,71 +301,6 @@ const server = http.createServer((req, res) => {
                 }));
             }
         });
-        return;
-    }
-
-    // API: Submit HTML for analysis
-    if (pathname === '/api/submit' && req.method === 'POST') {
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        let body = '';
-        
-        req.on('data', chunk => {
-            body += chunk;
-            // Prevent large payloads
-            if (body.length > 5000000) {
-                req.destroy();
-                res.writeHead(413);
-                res.end(JSON.stringify({ error: 'Payload too large' }));
-            }
-        });
-        
-        req.on('end', () => {
-            try {
-                const { html, pageUrl } = JSON.parse(body);
-                if (!html || typeof html !== 'string') {
-                    res.writeHead(400);
-                    res.end(JSON.stringify({ error: 'HTML content required' }));
-                    return;
-                }
-                const id = ++storeCounter;
-                pageStore[id] = { html, pageUrl, ts: Date.now() };
-                
-                // Clean up entries older than 10 minutes
-                for (const key of Object.keys(pageStore)) {
-                    if (Date.now() - pageStore[key].ts > 600000) {
-                        delete pageStore[key];
-                    }
-                }
-                
-                res.writeHead(200);
-                res.end(JSON.stringify({ id }));
-            } catch (e) {
-                res.writeHead(400);
-                res.end(JSON.stringify({ error: 'Invalid JSON' }));
-            }
-        });
-        return;
-    }
-
-    // API: Retrieve stored HTML
-    if (pathname === '/api/get' && req.method === 'GET') {
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        const id = parsed.query.id;
-        
-        if (!id) {
-            res.writeHead(400);
-            res.end(JSON.stringify({ error: 'ID parameter required' }));
-            return;
-        }
-        
-        const entry = pageStore[id];
-        if (!entry) {
-            res.writeHead(404);
-            res.end(JSON.stringify({ error: 'Not found or expired' }));
-        } else {
-            res.writeHead(200);
-            res.end(JSON.stringify({ html: entry.html, pageUrl: entry.pageUrl }));
-        }
         return;
     }
 

@@ -274,7 +274,7 @@ const DETECTORS = {
             details: found ? `Language: ${langMatch[1]}` : 'No lang attribute found'
         };
     },
-    sitemaps: (html, context = {}) => {
+    sitemaps: async (html, context = {}) => {
         const sitemapMatches = [...html.matchAll(/<link[^>]*href=['"]([^'">\s]*sitemap[^'">\s]*)['"]?[^>]*>/gi)];
         const htmlSitemapLinks = sitemapMatches.map(m => m[1]);
 
@@ -282,16 +282,49 @@ const DETECTORS = {
         const robotsSitemapMatches = [...robotsTxt.matchAll(/^\s*Sitemap:\s*(\S+)\s*$/gmi)];
         const robotsSitemapLinks = robotsSitemapMatches.map(m => m[1]);
 
-        const sitemapLinks = [...new Set([...htmlSitemapLinks, ...robotsSitemapLinks])];
-        const sitemapLink = sitemapLinks.length > 0;
+        const rawSitemapLinks = [...new Set([...htmlSitemapLinks, ...robotsSitemapLinks])];
+        const targetUrl = String(context.targetUrl || '').trim();
+        const sitemapLinks = rawSitemapLinks
+            .map(link => normalizeUrl(targetUrl, link) || link)
+            .filter(link => /^https?:\/\//i.test(link));
+
+        if (!targetUrl) {
+            return {
+                found: false,
+                count: 0,
+                quality: 'low',
+                details: 'Cannot validate sitemap inclusion because no target URL was provided',
+                links: sitemapLinks
+            };
+        }
+
+        if (sitemapLinks.length === 0) {
+            return {
+                found: false,
+                count: 0,
+                quality: 'low',
+                details: 'No associated sitemap links found in HTML or robots.txt',
+                links: []
+            };
+        }
+
+        const sitemapCheck = await findUrlInAssociatedSitemaps(sitemapLinks, targetUrl);
+        if (sitemapCheck.found) {
+            return {
+                found: true,
+                count: 1,
+                quality: 'high',
+                details: `URL is listed in sitemap: ${sitemapCheck.matchedSitemap} (checked ${sitemapCheck.checkedCount} sitemap file(s))`,
+                links: sitemapCheck.matchedSitemap ? [sitemapCheck.matchedSitemap] : []
+            };
+        }
+
         return {
-            found: sitemapLink,
-            count: sitemapLinks.length,
-            quality: sitemapLink ? 'high' : 'medium',
-            details: sitemapLink
-                ? `Sitemap link detected (${sitemapLinks.length}) — HTML: ${htmlSitemapLinks.length}, robots.txt: ${robotsSitemapLinks.length}`
-                : 'No sitemap link found in HTML or robots.txt',
-            links: sitemapLinks
+            found: false,
+            count: 0,
+            quality: 'low',
+            details: `URL not found in associated sitemaps after checking ${sitemapCheck.checkedCount} sitemap file(s)`,
+            links: sitemapCheck.checkedSitemaps
         };
     },
     metaDescription: (html) => {
@@ -306,12 +339,71 @@ const DETECTORS = {
     }
 };
 
-// Cache for bookmarklet code
-let bookmarkletCode = '';
+// Runtime audit state
 let lastAuditedSource = '';
 let lastAuditedHtml = '';
 let lastAuditResults = null;
 let lastAuditScore = 0;
+
+function getBookmarkletBaseUrl() {
+    const hostname = window.location.hostname;
+    const origin = window.location.origin;
+
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return 'http://localhost:3000';
+    }
+
+    if (origin && origin !== 'null') {
+        return origin;
+    }
+
+    return 'http://localhost:3000';
+}
+
+function escapeForSingleQuotedJsString(value) {
+    return String(value)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'");
+}
+
+function buildBookmarkletCode() {
+    const baseUrl = getBookmarkletBaseUrl();
+    const bookmarkletUrl = escapeForSingleQuotedJsString(`${baseUrl}/?url=`);
+    return `(function(){var u='${bookmarkletUrl}'+encodeURIComponent(location.href);window.location.href=u;})()`;
+}
+
+function getCleanAppUrl() {
+    return `${window.location.pathname}${window.location.hash || ''}`;
+}
+
+function setAppHistoryState(view, { replace = false } = {}) {
+    const state = { view };
+    const url = getCleanAppUrl();
+
+    if (replace) {
+        history.replaceState(state, '', url);
+    } else {
+        history.pushState(state, '', url);
+    }
+}
+
+function showHomeView({ updateHistory = false, focusUrlInput = true } = {}) {
+    clearInput();
+    if (updateHistory) {
+        const currentView = history.state?.view;
+        if (currentView === 'results') {
+            history.back();
+            return;
+        }
+        setAppHistoryState('home', { replace: currentView === 'home' });
+    }
+
+    if (focusUrlInput) {
+        const urlInput = document.getElementById('urlInput');
+        if (urlInput) urlInput.focus();
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
 
 /**
  * Initialize the auditor on page load
@@ -319,13 +411,25 @@ let lastAuditScore = 0;
  */
 document.addEventListener('DOMContentLoaded', async () => {
     try {
-        await loadBookmarkletCode();
+        loadBookmarkletCode();
         setupEventListeners();
         setupMessageListener();
 
-        // Auto-analyze if ?url= param is present (from bookmarklet)
+        // Read bookmarklet URL param before history normalization removes query params
         const params = new URLSearchParams(window.location.search);
         const sourceUrl = params.get('url');
+
+        setAppHistoryState('home', { replace: true });
+
+        window.addEventListener('popstate', () => {
+            if (history.state?.view === 'results' && lastAuditResults) {
+                displayResults(lastAuditResults, lastAuditScore, lastAuditedSource, { updateHistory: false });
+            } else {
+                showHomeView({ updateHistory: false, focusUrlInput: false });
+            }
+        });
+
+        // Auto-analyze if ?url= param is present (from bookmarklet)
         if (sourceUrl) {
             const urlInput = document.getElementById('urlInput');
             if (urlInput) urlInput.value = sourceUrl;
@@ -339,20 +443,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 /**
  * Load bookmarklet code asynchronously using Fetch API
  */
-async function loadBookmarkletCode() {
-    try {
-        const response = await fetch('/bookmarklet.js');
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        bookmarkletCode = await response.text();
-        
-        const bookmarkletLink = document.getElementById('bookmarkletLink');
-        if (bookmarkletLink) {
-            // Use the raw single-line code directly — no transformation needed
-            bookmarkletLink.href = 'javascript:' + bookmarkletCode.trim();
-            console.log('Bookmarklet loaded and ready');
-        }
-    } catch (error) {
-        console.error('Failed to load bookmarklet:', error);
+function loadBookmarkletCode() {
+    const bookmarkletLink = document.getElementById('bookmarkletLink');
+    if (!bookmarkletLink) return;
+
+    const currentHref = bookmarkletLink.getAttribute('href') || '';
+    if (!currentHref.startsWith('javascript:')) {
+        bookmarkletLink.href = 'javascript:' + buildBookmarkletCode();
     }
 }
 
@@ -360,6 +457,21 @@ async function loadBookmarkletCode() {
  * Setup event listeners using modern delegation patterns
  */
 function setupEventListeners() {
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    if (analyzeBtn) {
+        analyzeBtn.addEventListener('click', analyzeContent);
+    }
+
+    const clearBtn = document.getElementById('clearBtn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearInput);
+    }
+
+    const homeReturnBtn = document.getElementById('homeReturnBtn');
+    if (homeReturnBtn) {
+        homeReturnBtn.addEventListener('click', goHome);
+    }
+
     const fileInput = document.getElementById('fileInput');
     
     if (fileInput) {
@@ -381,7 +493,7 @@ function setupEventListeners() {
     // Handle URL input Enter key
     const urlInput = document.getElementById('urlInput');
     if (urlInput) {
-        urlInput.addEventListener('keypress', (event) => {
+        urlInput.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
                 analyzeContent();
             }
@@ -409,9 +521,110 @@ function setupEventListeners() {
 /**
  * Build audit context shared across detectors.
  */
-async function buildAuditContext(_htmlContent, _targetUrl, robotsTxtContent = '') {
+function buildAuditContext(_htmlContent, _targetUrl, robotsTxtContent = '') {
     return {
-        robotsTxtContent
+        robotsTxtContent,
+        targetUrl: _targetUrl || ''
+    };
+}
+
+function decodeXmlEntities(value) {
+    return String(value || '')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .trim();
+}
+
+function normalizeComparableUrl(input) {
+    try {
+        const u = new URL(String(input || '').trim());
+        u.hash = '';
+        const normalized = u.href;
+        return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+    } catch {
+        return '';
+    }
+}
+
+function extractSitemapLocs(xmlText, max = 200) {
+    const locRx = /<loc>\s*([\s\S]*?)\s*<\/loc>/gi;
+    const urls = [];
+    let match;
+    while ((match = locRx.exec(xmlText)) !== null && urls.length < max) {
+        const decoded = decodeXmlEntities(match[1]);
+        if (decoded) urls.push(decoded);
+    }
+    return urls;
+}
+
+async function fetchRemoteDocument(url) {
+    try {
+        const response = await fetch(`/api/fetch?url=${encodeURIComponent(url)}`);
+        if (!response.ok) return '';
+        const data = await response.json();
+        return String(data.html || '');
+    } catch {
+        return '';
+    }
+}
+
+async function findUrlInAssociatedSitemaps(initialSitemaps, targetUrl) {
+    const targetNormalized = normalizeComparableUrl(targetUrl);
+    if (!targetNormalized) {
+        return {
+            found: false,
+            checkedCount: 0,
+            matchedSitemap: '',
+            checkedSitemaps: []
+        };
+    }
+
+    const queue = [...new Set(initialSitemaps)].filter(Boolean);
+    const visited = new Set();
+    const maxSitemapsToCheck = 80;
+
+    while (queue.length > 0 && visited.size < maxSitemapsToCheck) {
+        const sitemapUrl = queue.shift();
+        if (!sitemapUrl || visited.has(sitemapUrl)) continue;
+        visited.add(sitemapUrl);
+
+        const xmlText = await fetchRemoteDocument(sitemapUrl);
+        if (!xmlText) continue;
+
+        const isIndex = /<sitemapindex\b/i.test(xmlText);
+        if (isIndex) {
+            const childLocs = extractSitemapLocs(xmlText, 200)
+                .map(loc => normalizeUrl(sitemapUrl, loc) || loc)
+                .filter(loc => /^https?:\/\//i.test(loc));
+
+            for (const child of childLocs) {
+                if (!visited.has(child) && !queue.includes(child)) queue.push(child);
+            }
+            continue;
+        }
+
+        const locs = extractSitemapLocs(xmlText, 2000);
+        for (const loc of locs) {
+            const normalizedLoc = normalizeComparableUrl(normalizeUrl(sitemapUrl, loc) || loc);
+            if (normalizedLoc && normalizedLoc === targetNormalized) {
+                return {
+                    found: true,
+                    checkedCount: visited.size,
+                    matchedSitemap: sitemapUrl,
+                    checkedSitemaps: Array.from(visited)
+                };
+            }
+        }
+    }
+
+    return {
+        found: false,
+        checkedCount: visited.size,
+        matchedSitemap: '',
+        checkedSitemaps: Array.from(visited)
     };
 }
 
@@ -420,10 +633,8 @@ async function buildAuditContext(_htmlContent, _targetUrl, robotsTxtContent = ''
  */
 function setupMessageListener() {
     window.addEventListener('message', async (event) => {
-        console.log('Message received:', event.data?.type);
         // Always validate origin in production
         if (event.data?.type === 'AUDITOR_DATA' && event.data?.html) {
-            console.log('Auditor data received, analyzing...');
             const { html, pageUrl } = event.data;
             const urlInput = document.getElementById('urlInput');
             if (urlInput && pageUrl) {
@@ -436,13 +647,12 @@ function setupMessageListener() {
                 responseHeaders: {}
             });
 
-            const auditContext = await buildAuditContext(html, pageUrl, gateEvaluation.robotsTxtContent || '');
+            const auditContext = buildAuditContext(html, pageUrl, gateEvaluation.robotsTxtContent || '');
             await runAnalysis(html, pageUrl || 'Bookmarklet capture', gateEvaluation.results, auditContext, {
                 forceZeroScore: !gateEvaluation.allPassed
             });
         }
     }, { once: false });
-    console.log('Message listener set up');
 }
 
 /**
@@ -493,7 +703,7 @@ async function analyzeContent() {
             responseHeaders
         });
 
-        const auditContext = await buildAuditContext(htmlContent, finalUrl || url, gateEvaluation.robotsTxtContent || '');
+        const auditContext = buildAuditContext(htmlContent, finalUrl || url, gateEvaluation.robotsTxtContent || '');
         await runAnalysis(htmlContent, finalUrl || url || 'Pasted content', gateEvaluation.results, auditContext, {
             forceZeroScore: !gateEvaluation.allPassed
         });
@@ -670,7 +880,6 @@ async function runGateChecks({ htmlContent, targetUrl, responseHeaders }) {
  */
 async function runAnalysis(htmlContent, source, gateResults = {}, context = {}, options = {}) {
     try {
-        console.log('Starting analysis...');
         lastAuditedHtml = htmlContent;
         const results = { ...gateResults };
         const maxScore = Object.values(AUDIT_ELEMENTS).reduce((sum, el) => sum + el.weight, 0);
@@ -678,7 +887,7 @@ async function runAnalysis(htmlContent, source, gateResults = {}, context = {}, 
 
         // Analyze each element
         for (const [key, element] of Object.entries(AUDIT_ELEMENTS)) {
-            const detection = DETECTORS[key](htmlContent, context);
+            const detection = await DETECTORS[key](htmlContent, context);
             results[key] = { ...element, ...detection };
             if (detection.found) {
                 totalScore += element.weight;
@@ -687,8 +896,7 @@ async function runAnalysis(htmlContent, source, gateResults = {}, context = {}, 
 
         const computedScore = Math.round((totalScore / maxScore) * 100);
         const score = options.forceZeroScore ? 0 : computedScore;
-        console.log('Analysis complete, score:', score);
-        displayResults(results, score, source);
+        displayResults(results, score, source, { updateHistory: true });
     } catch (error) {
         showError(`Analysis error: ${error.message}`);
         console.error('Error during analysis:', error);
@@ -698,8 +906,7 @@ async function runAnalysis(htmlContent, source, gateResults = {}, context = {}, 
 /**
  * Display results using modern DOM manipulation
  */
-function displayResults(results, score, source) {
-    console.log('Displaying results...');
+function displayResults(results, score, source, { updateHistory = true } = {}) {
     const emptyState = document.getElementById('emptyState');
     const resultsContent = document.getElementById('resultsContent');
     const scoreCircle = document.getElementById('scoreCircle');
@@ -725,6 +932,11 @@ function displayResults(results, score, source) {
     if (emptyState) emptyState.style.display = 'none';
     if (resultsContent) resultsContent.style.display = 'block';
     if (container) container.classList.add('results-showing');
+
+    if (updateHistory) {
+        const currentView = history.state?.view;
+        setAppHistoryState('results', { replace: currentView === 'results' });
+    }
 
     // Show audited page link
     const auditedUrlLine = document.getElementById('auditedUrlLine');
@@ -1194,7 +1406,7 @@ function buildManualVerificationGuidance(key, data, sourceUrl) {
     const steps = [];
     const links = [];
 
-    if (sourceUrl && /^https?:\/\//i.test(sourceUrl)) {
+    if (key !== 'sitemaps' && sourceUrl && /^https?:\/\//i.test(sourceUrl)) {
         const sourceLink = toViewSourceUrl(sourceUrl);
         if (sourceLink) links.push({ label: 'Audited page', url: sourceLink });
     }
@@ -1209,7 +1421,9 @@ function buildManualVerificationGuidance(key, data, sourceUrl) {
     for (const link of dataLinks) {
         const resolved = normalizeUrl(sourceUrl, link);
         const viewSourceLink = toViewSourceUrl(resolved);
-        if (viewSourceLink) links.push({ label: 'Detected URL', url: viewSourceLink });
+        if (viewSourceLink) {
+            links.push({ label: key === 'sitemaps' ? 'Sitemap checked' : 'Detected URL', url: viewSourceLink });
+        }
     }
 
     switch (key) {
@@ -1467,12 +1681,9 @@ function clearInput() {
     document.getElementById('emptyState').style.display = 'block';
 }
 
-
-
-// Expose functions called via inline onclick handlers in index.html
-// (required because auditor.js is loaded as type="module" which scopes all declarations)
-window.analyzeContent = analyzeContent;
-window.clearInput = clearInput;
+function goHome() {
+    showHomeView({ updateHistory: true, focusUrlInput: true });
+}
 
 // Add CSS class for screen reader only content
 const style = document.createElement('style');
