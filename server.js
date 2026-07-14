@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 
 const PORT = 3000;
+const DEFAULT_CRAWLER_USER_AGENT = 'SeLlmCrawl/1.0 (+https://github.com/antoinebisch/LLM-Engines-Crawlabillity-Auditor) Mozilla/5.0 (compatible; LLM-Crawlability-Auditor)';
+const CRAWLER_USER_AGENT = (process.env.CRAWLER_USER_AGENT || DEFAULT_CRAWLER_USER_AGENT).trim();
 
 function escapeForSingleQuotedJsString(value) {
     return String(value)
@@ -25,7 +27,7 @@ function fetchUrl(targetUrl, callback, redirectCount = 0, retryCount = 0) {
             path: parsed.pathname + parsed.search,
             method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                'User-Agent': CRAWLER_USER_AGENT,
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
@@ -272,7 +274,7 @@ const server = http.createServer((req, res) => {
                         const fallbackResp = await fetch(targetUrl, {
                             redirect: 'follow',
                             headers: {
-                                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                                'User-Agent': CRAWLER_USER_AGENT,
                                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                                 'Accept-Language': 'en-US,en;q=0.9'
                             }
