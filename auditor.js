@@ -787,7 +787,7 @@ async function analyzeContent() {
     try {
         if (url && !htmlContent) {
             // Fetch URL content
-            showLoading(true);
+            showLoading(true, 'Fetching page content...');
             const response = await fetch(`/api/fetch?url=${encodeURIComponent(url)}`);
             if (!response.ok) {
                 let apiError = `HTTP ${response.status}`;
@@ -812,16 +812,18 @@ async function analyzeContent() {
             return;
         }
 
-        showLoading(true);
+        showLoading(true, 'Preparing audit checks...');
         const gateEvaluation = await runGateChecks({
             htmlContent,
             targetUrl: finalUrl || url,
-            responseHeaders
+            responseHeaders,
+            onProgress: (message) => setLoadingMessage(message)
         });
 
         const auditContext = buildAuditContext(htmlContent, finalUrl || url, gateEvaluation.robotsTxtContent || '');
         await runAnalysis(htmlContent, finalUrl || url || 'Pasted content', gateEvaluation.results, auditContext, {
-            forceZeroScore: !gateEvaluation.allPassed
+            forceZeroScore: !gateEvaluation.allPassed,
+            onProgress: (message) => setLoadingMessage(message)
         });
     } catch (error) {
         const msg = String(error?.message || 'Unknown error');
@@ -920,9 +922,13 @@ function hasNoindexDirective(htmlContent, responseHeaders = {}) {
     };
 }
 
-async function runGateChecks({ htmlContent, targetUrl, responseHeaders }) {
+async function runGateChecks({ htmlContent, targetUrl, responseHeaders, onProgress = null }) {
     const results = {};
     let robotsTxtContent = '';
+
+    const reportProgress = (message) => {
+        if (typeof onProgress === 'function') onProgress(message);
+    };
 
     // Gate 1: robots.txt
     let robotsPass = true;
@@ -931,6 +937,7 @@ async function runGateChecks({ htmlContent, targetUrl, responseHeaders }) {
 
     if (targetUrl) {
         try {
+            reportProgress('Checking robots.txt gate...');
             const parsed = new URL(targetUrl);
             const robotsUrl = `${parsed.protocol}//${parsed.host}/robots.txt`;
             robotsTxtUrl = robotsUrl;
@@ -966,6 +973,7 @@ async function runGateChecks({ htmlContent, targetUrl, responseHeaders }) {
     };
 
     // Gate 2: noindex
+    reportProgress('Checking noindex gate...');
     const noindexCheck = hasNoindexDirective(htmlContent, responseHeaders);
     const noindexPass = !noindexCheck.failed;
     let noindexDetails = 'No noindex directive found in meta robots or X-Robots-Tag.';
@@ -1000,15 +1008,25 @@ async function runAnalysis(htmlContent, source, gateResults = {}, context = {}, 
         const results = { ...gateResults };
         const maxScore = Object.values(AUDIT_ELEMENTS).reduce((sum, el) => sum + el.weight, 0);
         let totalScore = 0;
+        const reportProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+        const auditEntries = Object.entries(AUDIT_ELEMENTS);
 
         // Analyze each element
-        for (const [key, element] of Object.entries(AUDIT_ELEMENTS)) {
+        for (let index = 0; index < auditEntries.length; index += 1) {
+            const [key, element] = auditEntries[index];
+            if (reportProgress) {
+                const readableName = String(element.name || key).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+                reportProgress(`Running check ${index + 1}/${auditEntries.length}: ${readableName}`);
+            }
+
             const detection = await DETECTORS[key](htmlContent, context);
             results[key] = { ...element, ...detection };
             if (detection.found) {
                 totalScore += element.weight;
             }
         }
+
+        if (reportProgress) reportProgress('Finalizing audit results...');
 
         const computedScore = Math.round((totalScore / maxScore) * 100);
         const score = options.forceZeroScore ? 0 : computedScore;
@@ -1762,15 +1780,24 @@ function createMetricElement(key, data) {
 /**
  * Show/hide loading indicator with accessibility support
  */
-function showLoading(show) {
+function setLoadingMessage(message) {
+    const messageEl = document.getElementById('loadingMessage');
+    if (messageEl) {
+        messageEl.textContent = message || 'Analyzing content...';
+    }
+}
+
+function showLoading(show, message = 'Analyzing content...') {
     const indicator = document.getElementById('loadingIndicator');
     if (indicator) {
         if (show) {
+            setLoadingMessage(message);
             indicator.classList.add('active');
             indicator.setAttribute('role', 'status');
             indicator.setAttribute('aria-live', 'polite');
         } else {
             indicator.classList.remove('active');
+            setLoadingMessage('Analyzing content...');
         }
     }
 }
