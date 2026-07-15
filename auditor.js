@@ -609,42 +609,65 @@ async function findUrlInAssociatedSitemaps(initialSitemaps, targetUrl) {
     }
 
     const prioritized = prioritizeSitemapsByLocale(initialSitemaps, targetUrl);
-    const queue = [...new Set(prioritized)].filter(Boolean);
+    const pendingQueue = [...new Set(prioritized)].filter(Boolean);
+    const urlSitemapQueue = [];
+    const indexSitemapQueue = [];
+    const queued = new Set(pendingQueue);
     const visited = new Set();
     const maxSitemapsToCheck = 80;
 
-    while (queue.length > 0 && visited.size < maxSitemapsToCheck) {
-        const sitemapUrl = queue.shift();
-        if (!sitemapUrl || visited.has(sitemapUrl)) continue;
-        visited.add(sitemapUrl);
+    while (visited.size < maxSitemapsToCheck) {
+        // Classify pending sitemaps and prioritize URL sitemaps over indexes.
+        while (urlSitemapQueue.length === 0 && pendingQueue.length > 0 && visited.size < maxSitemapsToCheck) {
+            const sitemapUrl = pendingQueue.shift();
+            if (!sitemapUrl || visited.has(sitemapUrl)) continue;
 
-        const xmlText = await fetchRemoteDocument(sitemapUrl);
-        if (!xmlText) continue;
+            visited.add(sitemapUrl);
+            const xmlText = await fetchRemoteDocument(sitemapUrl);
+            if (!xmlText) continue;
 
-        const isIndex = /<sitemapindex\b/i.test(xmlText);
-        if (isIndex) {
-            const childLocs = extractSitemapLocs(xmlText, 200)
-                .map(loc => normalizeUrl(sitemapUrl, loc) || loc)
-                .filter(loc => /^https?:\/\//i.test(loc));
+            if (/<sitemapindex\b/i.test(xmlText)) {
+                indexSitemapQueue.push({ sitemapUrl, xmlText });
+            } else {
+                urlSitemapQueue.push({ sitemapUrl, xmlText });
+            }
+        }
 
-            for (const child of childLocs) {
-                if (!visited.has(child) && !queue.includes(child)) queue.push(child);
+        if (urlSitemapQueue.length > 0) {
+            const { sitemapUrl, xmlText } = urlSitemapQueue.shift();
+            const locs = extractSitemapLocs(xmlText, 2000);
+            for (const loc of locs) {
+                const normalizedLoc = normalizeComparableUrl(normalizeUrl(sitemapUrl, loc) || loc);
+                if (normalizedLoc && normalizedLoc === targetNormalized) {
+                    return {
+                        found: true,
+                        checkedCount: visited.size,
+                        matchedSitemap: sitemapUrl,
+                        checkedSitemaps: Array.from(visited)
+                    };
+                }
             }
             continue;
         }
 
-        const locs = extractSitemapLocs(xmlText, 2000);
-        for (const loc of locs) {
-            const normalizedLoc = normalizeComparableUrl(normalizeUrl(sitemapUrl, loc) || loc);
-            if (normalizedLoc && normalizedLoc === targetNormalized) {
-                return {
-                    found: true,
-                    checkedCount: visited.size,
-                    matchedSitemap: sitemapUrl,
-                    checkedSitemaps: Array.from(visited)
-                };
+        // No URL sitemap left to check, process next sitemap index and enqueue its children.
+        if (indexSitemapQueue.length > 0) {
+            const { sitemapUrl, xmlText } = indexSitemapQueue.shift();
+            const childLocs = extractSitemapLocs(xmlText, 200)
+                .map(loc => normalizeUrl(sitemapUrl, loc) || loc)
+                .filter(loc => /^https?:\/\//i.test(loc));
+
+            const prioritizedChildren = prioritizeSitemapsByLocale(childLocs, targetUrl);
+            for (const child of prioritizedChildren) {
+                if (!child || visited.has(child) || queued.has(child)) continue;
+                pendingQueue.push(child);
+                queued.add(child);
             }
+            continue;
         }
+
+        // Nothing left to classify or process.
+        if (pendingQueue.length === 0) break;
     }
 
     return {
