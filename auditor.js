@@ -556,6 +556,23 @@ function extractSitemapLocs(xmlText, max = 200) {
     return urls;
 }
 
+function sitemapContainsTargetUrl(xmlText, sitemapUrl, targetNormalized, maxUrlsToCheck = 50000) {
+    const locRx = /<loc>\s*([\s\S]*?)\s*<\/loc>/gi;
+    let match;
+    let checked = 0;
+
+    while ((match = locRx.exec(xmlText)) !== null && checked < maxUrlsToCheck) {
+        checked += 1;
+        const decoded = decodeXmlEntities(match[1]);
+        const normalizedLoc = normalizeComparableUrl(normalizeUrl(sitemapUrl, decoded) || decoded);
+        if (normalizedLoc && normalizedLoc === targetNormalized) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 async function fetchRemoteDocument(url) {
     try {
         const response = await fetch(`/api/fetch?url=${encodeURIComponent(url)}`);
@@ -658,20 +675,17 @@ async function findUrlInAssociatedSitemaps(initialSitemaps, targetUrl) {
 
             if (standardQueue.length > 0) {
                 const { sitemapUrl, xmlText } = standardQueue.shift();
-                const locs = extractSitemapLocs(xmlText, 2000);
-                for (const loc of locs) {
-                    const normalizedLoc = normalizeComparableUrl(normalizeUrl(sitemapUrl, loc) || loc);
-                    if (normalizedLoc && normalizedLoc === targetNormalized) {
-                        matchedSitemap = sitemapUrl;
-                        return true;
-                    }
+                const foundInStandardSitemap = sitemapContainsTargetUrl(xmlText, sitemapUrl, targetNormalized, 50000);
+                if (foundInStandardSitemap) {
+                    matchedSitemap = sitemapUrl;
+                    return true;
                 }
                 continue;
             }
 
             if (indexQueue.length > 0) {
                 const { sitemapUrl, xmlText } = indexQueue.shift();
-                const childLocs = extractSitemapLocs(xmlText, 200)
+                const childLocs = extractSitemapLocs(xmlText, 50000)
                     .map(loc => normalizeUrl(sitemapUrl, loc) || loc)
                     .filter(loc => /^https?:\/\//i.test(loc));
 
