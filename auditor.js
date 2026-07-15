@@ -567,6 +567,36 @@ async function fetchRemoteDocument(url) {
     }
 }
 
+function extractLocalePath(url) {
+    try {
+        const parsed = new URL(String(url || ''));
+        const pathname = parsed.pathname || '';
+        // Extract locale path (e.g., /ch/fr/ from https://www.example.com/ch/fr/page)
+        const match = pathname.match(/^(\/[a-z]{2}(?:\/[a-z]{2})?\/)/i);
+        return match ? match[1].toLowerCase() : '';
+    } catch {
+        return '';
+    }
+}
+
+function prioritizeSitemapsByLocale(sitemaps, targetUrl) {
+    const localePath = extractLocalePath(targetUrl);
+    if (!localePath) return sitemaps;
+    
+    const matching = [];
+    const nonMatching = [];
+    
+    for (const sitemap of sitemaps) {
+        if (sitemap.toLowerCase().includes(localePath.replace(/\/$/, ''))) {
+            matching.push(sitemap);
+        } else {
+            nonMatching.push(sitemap);
+        }
+    }
+    
+    return [...matching, ...nonMatching];
+}
+
 async function findUrlInAssociatedSitemaps(initialSitemaps, targetUrl) {
     const targetNormalized = normalizeComparableUrl(targetUrl);
     if (!targetNormalized) {
@@ -578,7 +608,8 @@ async function findUrlInAssociatedSitemaps(initialSitemaps, targetUrl) {
         };
     }
 
-    const queue = [...new Set(initialSitemaps)].filter(Boolean);
+    const prioritized = prioritizeSitemapsByLocale(initialSitemaps, targetUrl);
+    const queue = [...new Set(prioritized)].filter(Boolean);
     const visited = new Set();
     const maxSitemapsToCheck = 80;
 
