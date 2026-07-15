@@ -939,11 +939,14 @@ function displayResults(results, score, source, { updateHistory = true } = {}) {
     const scoreCircle = document.getElementById('scoreCircle');
     const metricsContainer = document.getElementById('metricsContainer');
     const container = document.querySelector('.container');
+    const resultsSection = container.querySelector('section:has(#auditedUrlLine)') || container.querySelector('section.card:last-of-type');
+    const resultsSectionH2 = resultsSection?.querySelector('h2');
+    
     lastAuditedSource = source || '';
     lastAuditResults = results;
     lastAuditScore = score;
 
-    // Show / update CSV download button
+    // Create or update CSV download button
     let csvBtn = document.getElementById('csvDownloadBtn');
     if (!csvBtn) {
         csvBtn = document.createElement('button');
@@ -952,7 +955,10 @@ function displayResults(results, score, source, { updateHistory = true } = {}) {
         csvBtn.textContent = '⬇ Download CSV';
         csvBtn.className = 'csv-download-btn';
         csvBtn.addEventListener('click', downloadAuditCsv);
-        resultsContent.appendChild(csvBtn);
+        // Insert button next to h2 heading
+        if (resultsSectionH2) {
+            resultsSectionH2.appendChild(csvBtn);
+        }
     }
 
     // Hide empty state, show results and hide input section
@@ -1662,11 +1668,12 @@ function createMetricElement(key, data) {
 function showLoading(show) {
     const indicator = document.getElementById('loadingIndicator');
     if (indicator) {
-        indicator.style.display = show ? 'block' : 'none';
-        // Announce to screen readers
         if (show) {
+            indicator.classList.add('active');
             indicator.setAttribute('role', 'status');
             indicator.setAttribute('aria-live', 'polite');
+        } else {
+            indicator.classList.remove('active');
         }
     }
 }

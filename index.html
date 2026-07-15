@@ -155,7 +155,40 @@
             color: var(--neutral-800);
             margin-bottom: 20px;
         }
+        /* Results Section Header with Download Button */
+        section.card:has(#auditedUrlLine) {
+            position: relative;
+        }
 
+        section.card:has(#auditedUrlLine) h2 {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .csv-download-btn {
+            background: var(--success);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .csv-download-btn:hover {
+            background: #0e7960;
+            transform: translateY(-2px);
+        }
+
+        .csv-download-btn:active {
+            transform: translateY(0);
+        }
         .input-group {
             margin-bottom: 20px;
         }
@@ -244,15 +277,33 @@
 
         #loadingIndicator {
             display: none;
-            text-align: center;
-            margin-top: 20px;
-            color: var(--primary);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        #loadingIndicator.active {
+            display: flex;
         }
 
         .loading-spinner {
-            font-size: 2em;
-            margin-bottom: 10px;
+            font-size: 4em;
+            margin-bottom: 20px;
             animation: spin 1s linear infinite;
+            color: white;
+        }
+
+        #loadingIndicator p {
+            color: white;
+            font-size: 1.2em;
+            text-align: center;
         }
 
         @keyframes spin {
