@@ -940,25 +940,33 @@ function displayResults(results, score, source, { updateHistory = true } = {}) {
     const metricsContainer = document.getElementById('metricsContainer');
     const container = document.querySelector('.container');
     const resultsSection = container.querySelector('section:has(#auditedUrlLine)') || container.querySelector('section.card:last-of-type');
-    const resultsSectionH2 = resultsSection?.querySelector('h2');
     
     lastAuditedSource = source || '';
     lastAuditResults = results;
     lastAuditScore = score;
 
-    // Create or update CSV download button
-    let csvBtn = document.getElementById('csvDownloadBtn');
-    if (!csvBtn) {
-        csvBtn = document.createElement('button');
-        csvBtn.id = 'csvDownloadBtn';
-        csvBtn.type = 'button';
-        csvBtn.textContent = '⬇ Download CSV';
-        csvBtn.className = 'csv-download-btn';
-        csvBtn.addEventListener('click', downloadAuditCsv);
-        // Insert button next to h2 heading
-        if (resultsSectionH2) {
-            resultsSectionH2.appendChild(csvBtn);
-        }
+    // Create or update top-right CSV download button
+    let topRightCsvBtn = document.getElementById('csvDownloadBtnTopRight');
+    if (!topRightCsvBtn) {
+        topRightCsvBtn = document.createElement('button');
+        topRightCsvBtn.id = 'csvDownloadBtnTopRight';
+        topRightCsvBtn.type = 'button';
+        topRightCsvBtn.textContent = '⬇ Download CSV';
+        topRightCsvBtn.className = 'csv-download-btn top-right';
+        topRightCsvBtn.addEventListener('click', downloadAuditCsv);
+        resultsSection.appendChild(topRightCsvBtn);
+    }
+
+    // Create or update bottom-centered CSV download button
+    let bottomCsvBtn = document.getElementById('csvDownloadBtnBottom');
+    if (!bottomCsvBtn) {
+        bottomCsvBtn = document.createElement('button');
+        bottomCsvBtn.id = 'csvDownloadBtnBottom';
+        bottomCsvBtn.type = 'button';
+        bottomCsvBtn.textContent = '⬇ Download CSV';
+        bottomCsvBtn.className = 'csv-download-btn bottom-center';
+        bottomCsvBtn.addEventListener('click', downloadAuditCsv);
+        resultsSection.appendChild(bottomCsvBtn);
     }
 
     // Hide empty state, show results and hide input section
