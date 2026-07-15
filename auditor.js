@@ -631,6 +631,9 @@ async function findUrlInAssociatedSitemaps(initialSitemaps, targetUrl) {
     }
 
     const uniqueInitial = [...new Set(initialSitemaps)].filter(Boolean);
+    const targetUrlObj = (() => { try { return new URL(String(targetUrl || '')); } catch { return null; } })();
+    const isSeComOrigin = targetUrlObj && targetUrlObj.origin === 'https://www.se.com';
+
     const localePath = extractLocalePath(targetUrl);
     const localeQueue = [];
     const fallbackQueue = [];
@@ -720,14 +723,17 @@ async function findUrlInAssociatedSitemaps(initialSitemaps, targetUrl) {
     }
 
     // Phase 2: fallback (alphabetical seed order), still checking standard sitemaps before indexes.
-    const foundInFallbackPhase = await processPhase(fallbackQueue, fallbackQueue, false);
-    if (foundInFallbackPhase) {
-        return {
-            found: true,
-            checkedCount: visited.size,
-            matchedSitemap,
-            checkedSitemaps: Array.from(visited)
-        };
+    // Skip fallback phase for se.com origin - only check locale-matched sitemaps.
+    if (!isSeComOrigin) {
+        const foundInFallbackPhase = await processPhase(fallbackQueue, fallbackQueue, false);
+        if (foundInFallbackPhase) {
+            return {
+                found: true,
+                checkedCount: visited.size,
+                matchedSitemap,
+                checkedSitemaps: Array.from(visited)
+            };
+        }
     }
 
     return {
