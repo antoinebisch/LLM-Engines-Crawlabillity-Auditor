@@ -579,6 +579,11 @@ function extractLocalePath(url) {
     }
 }
 
+function isLocaleMatchingSitemap(sitemapUrl, localePath) {
+    if (!localePath) return false;
+    return String(sitemapUrl || '').toLowerCase().includes(localePath.replace(/\/$/, ''));
+}
+
 function prioritizeSitemapsByLocale(sitemaps, targetUrl) {
     const localePath = extractLocalePath(targetUrl);
     if (!localePath) return sitemaps;
@@ -587,7 +592,7 @@ function prioritizeSitemapsByLocale(sitemaps, targetUrl) {
     const nonMatching = [];
     
     for (const sitemap of sitemaps) {
-        if (sitemap.toLowerCase().includes(localePath.replace(/\/$/, ''))) {
+        if (isLocaleMatchingSitemap(sitemap, localePath)) {
             matching.push(sitemap);
         } else {
             nonMatching.push(sitemap);
@@ -608,66 +613,107 @@ async function findUrlInAssociatedSitemaps(initialSitemaps, targetUrl) {
         };
     }
 
-    const prioritized = prioritizeSitemapsByLocale(initialSitemaps, targetUrl);
-    const pendingQueue = [...new Set(prioritized)].filter(Boolean);
-    const urlSitemapQueue = [];
-    const indexSitemapQueue = [];
-    const queued = new Set(pendingQueue);
+    const uniqueInitial = [...new Set(initialSitemaps)].filter(Boolean);
+    const localePath = extractLocalePath(targetUrl);
+    const localeQueue = [];
+    const fallbackQueue = [];
+
+    if (localePath) {
+        for (const sitemap of uniqueInitial) {
+            if (isLocaleMatchingSitemap(sitemap, localePath)) {
+                localeQueue.push(sitemap);
+            } else {
+                fallbackQueue.push(sitemap);
+            }
+        }
+    } else {
+        fallbackQueue.push(...uniqueInitial);
+    }
+
+    const queued = new Set(uniqueInitial);
     const visited = new Set();
     const maxSitemapsToCheck = 80;
+    let matchedSitemap = '';
 
-    while (visited.size < maxSitemapsToCheck) {
-        // Classify pending sitemaps and prioritize URL sitemaps over indexes.
-        while (urlSitemapQueue.length === 0 && pendingQueue.length > 0 && visited.size < maxSitemapsToCheck) {
-            const sitemapUrl = pendingQueue.shift();
-            if (!sitemapUrl || visited.has(sitemapUrl)) continue;
+    async function processPhase(seedQueue, deferredQueue, deferNonLocaleChildren) {
+        const standardQueue = [];
+        const indexQueue = [];
 
-            visited.add(sitemapUrl);
-            const xmlText = await fetchRemoteDocument(sitemapUrl);
-            if (!xmlText) continue;
+        while (visited.size < maxSitemapsToCheck && (seedQueue.length > 0 || standardQueue.length > 0 || indexQueue.length > 0)) {
+            // Classify available sitemaps while favoring standard sitemap checks before index checks.
+            while (standardQueue.length === 0 && seedQueue.length > 0 && visited.size < maxSitemapsToCheck) {
+                const sitemapUrl = seedQueue.shift();
+                if (!sitemapUrl || visited.has(sitemapUrl)) continue;
 
-            if (/<sitemapindex\b/i.test(xmlText)) {
-                indexSitemapQueue.push({ sitemapUrl, xmlText });
-            } else {
-                urlSitemapQueue.push({ sitemapUrl, xmlText });
-            }
-        }
+                visited.add(sitemapUrl);
+                const xmlText = await fetchRemoteDocument(sitemapUrl);
+                if (!xmlText) continue;
 
-        if (urlSitemapQueue.length > 0) {
-            const { sitemapUrl, xmlText } = urlSitemapQueue.shift();
-            const locs = extractSitemapLocs(xmlText, 2000);
-            for (const loc of locs) {
-                const normalizedLoc = normalizeComparableUrl(normalizeUrl(sitemapUrl, loc) || loc);
-                if (normalizedLoc && normalizedLoc === targetNormalized) {
-                    return {
-                        found: true,
-                        checkedCount: visited.size,
-                        matchedSitemap: sitemapUrl,
-                        checkedSitemaps: Array.from(visited)
-                    };
+                if (/<sitemapindex\b/i.test(xmlText)) {
+                    indexQueue.push({ sitemapUrl, xmlText });
+                } else {
+                    standardQueue.push({ sitemapUrl, xmlText });
                 }
             }
-            continue;
-        }
 
-        // No URL sitemap left to check, process next sitemap index and enqueue its children.
-        if (indexSitemapQueue.length > 0) {
-            const { sitemapUrl, xmlText } = indexSitemapQueue.shift();
-            const childLocs = extractSitemapLocs(xmlText, 200)
-                .map(loc => normalizeUrl(sitemapUrl, loc) || loc)
-                .filter(loc => /^https?:\/\//i.test(loc));
-
-            const prioritizedChildren = prioritizeSitemapsByLocale(childLocs, targetUrl);
-            for (const child of prioritizedChildren) {
-                if (!child || visited.has(child) || queued.has(child)) continue;
-                pendingQueue.push(child);
-                queued.add(child);
+            if (standardQueue.length > 0) {
+                const { sitemapUrl, xmlText } = standardQueue.shift();
+                const locs = extractSitemapLocs(xmlText, 2000);
+                for (const loc of locs) {
+                    const normalizedLoc = normalizeComparableUrl(normalizeUrl(sitemapUrl, loc) || loc);
+                    if (normalizedLoc && normalizedLoc === targetNormalized) {
+                        matchedSitemap = sitemapUrl;
+                        return true;
+                    }
+                }
+                continue;
             }
-            continue;
+
+            if (indexQueue.length > 0) {
+                const { sitemapUrl, xmlText } = indexQueue.shift();
+                const childLocs = extractSitemapLocs(xmlText, 200)
+                    .map(loc => normalizeUrl(sitemapUrl, loc) || loc)
+                    .filter(loc => /^https?:\/\//i.test(loc));
+
+                const prioritizedChildren = prioritizeSitemapsByLocale(childLocs, targetUrl);
+                for (const child of prioritizedChildren) {
+                    if (!child || visited.has(child) || queued.has(child)) continue;
+
+                    if (deferNonLocaleChildren && localePath && !isLocaleMatchingSitemap(child, localePath)) {
+                        deferredQueue.push(child);
+                    } else {
+                        seedQueue.push(child);
+                    }
+                    queued.add(child);
+                }
+            }
         }
 
-        // Nothing left to classify or process.
-        if (pendingQueue.length === 0) break;
+        return false;
+    }
+
+    // Phase 1: current /cc/lc/ only, with standard sitemaps before indexes.
+    if (localeQueue.length > 0) {
+        const foundInLocalePhase = await processPhase(localeQueue, fallbackQueue, true);
+        if (foundInLocalePhase) {
+            return {
+                found: true,
+                checkedCount: visited.size,
+                matchedSitemap,
+                checkedSitemaps: Array.from(visited)
+            };
+        }
+    }
+
+    // Phase 2: fallback (alphabetical seed order), still checking standard sitemaps before indexes.
+    const foundInFallbackPhase = await processPhase(fallbackQueue, fallbackQueue, false);
+    if (foundInFallbackPhase) {
+        return {
+            found: true,
+            checkedCount: visited.size,
+            matchedSitemap,
+            checkedSitemaps: Array.from(visited)
+        };
     }
 
     return {
