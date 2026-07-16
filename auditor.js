@@ -459,6 +459,73 @@ let lastAuditedHtml = '';
 let lastAuditResults = null;
 let lastAuditScore = 0;
 
+const FAVICON_STATE = {
+    IDLE: 'idle',
+    RUNNING: 'running',
+    COMPLETE: 'complete'
+};
+
+function getFaviconGradientStops(state) {
+    switch (state) {
+        case FAVICON_STATE.RUNNING:
+            return [
+                { offset: '0%', color: '#fde68a' },
+                { offset: '50%', color: '#f59e0b' },
+                { offset: '100%', color: '#f97316' }
+            ];
+        case FAVICON_STATE.COMPLETE:
+            return [
+                { offset: '0%', color: '#6ee7b7' },
+                { offset: '55%', color: '#22c55e' },
+                { offset: '100%', color: '#15803d' }
+            ];
+        case FAVICON_STATE.IDLE:
+        default:
+            // Gemini-inspired multi-color gradient
+            return [
+                { offset: '0%', color: '#4285f4' },
+                { offset: '45%', color: '#9b72cb' },
+                { offset: '78%', color: '#d96570' },
+                { offset: '100%', color: '#f9ab00' }
+            ];
+    }
+}
+
+function buildFaviconSvg(state) {
+    const stops = getFaviconGradientStops(state)
+        .map(stop => `<stop offset="${stop.offset}" stop-color="${stop.color}"/>`)
+        .join('');
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+            <linearGradient id="lensGradient" x1="10" y1="10" x2="42" y2="42" gradientUnits="userSpaceOnUse">
+                ${stops}
+            </linearGradient>
+        </defs>
+        <circle cx="26" cy="26" r="15" fill="url(#lensGradient)" stroke="#1f2937" stroke-width="3.5"/>
+        <circle cx="22" cy="21" r="5" fill="#ffffff" opacity="0.25"/>
+        <line x1="37" y1="37" x2="52" y2="52" stroke="#1f2937" stroke-width="6" stroke-linecap="round"/>
+    </svg>`;
+}
+
+function setFaviconState(state = FAVICON_STATE.IDLE) {
+    if (typeof document === 'undefined') return;
+
+    let faviconLink = document.getElementById('appFavicon');
+    if (!faviconLink) {
+        faviconLink = document.querySelector('link[rel="icon"]');
+    }
+    if (!faviconLink) {
+        faviconLink = document.createElement('link');
+        faviconLink.rel = 'icon';
+        faviconLink.id = 'appFavicon';
+        document.head.appendChild(faviconLink);
+    }
+
+    const svg = buildFaviconSvg(state);
+    faviconLink.setAttribute('href', `data:image/svg+xml,${encodeURIComponent(svg)}`);
+}
+
 function getBookmarkletBaseUrl() {
     const hostname = window.location.hostname;
     const origin = window.location.origin;
@@ -503,6 +570,7 @@ function setAppHistoryState(view, { replace = false } = {}) {
 
 function showHomeView({ updateHistory = false, focusUrlInput = true } = {}) {
     clearInput();
+    setFaviconState(FAVICON_STATE.IDLE);
     if (updateHistory) {
         const currentView = history.state?.view;
         setAppHistoryState('home', { replace: currentView === 'results' || currentView === 'home' });
@@ -521,6 +589,7 @@ function showHomeView({ updateHistory = false, focusUrlInput = true } = {}) {
  */
 document.addEventListener('DOMContentLoaded', async () => {
     try {
+        setFaviconState(FAVICON_STATE.IDLE);
         loadBookmarkletCode();
         setupEventListeners();
         setupMessageListener();
@@ -1255,6 +1324,7 @@ function displayResults(results, score, source, { updateHistory = true } = {}) {
     
     // Hide loading
     showLoading(false);
+    setFaviconState(FAVICON_STATE.COMPLETE);
 }
 
 /**
@@ -1931,6 +2001,7 @@ function showLoading(show, message = 'Analyzing content...') {
     const indicator = document.getElementById('loadingIndicator');
     if (indicator) {
         if (show) {
+            setFaviconState(FAVICON_STATE.RUNNING);
             setLoadingMessage(message);
             indicator.classList.add('active');
             indicator.setAttribute('role', 'status');
@@ -1967,6 +2038,7 @@ function showError(message) {
     announcement.textContent = `Error: ${message}`;
     document.body.appendChild(announcement);
     setTimeout(() => announcement.remove(), 3000);
+    setFaviconState(FAVICON_STATE.IDLE);
 }
 
 function clearInput() {
@@ -1977,6 +2049,7 @@ function clearInput() {
     if (container) container.classList.remove('results-showing');
     document.getElementById('resultsContent').style.display = 'none';
     document.getElementById('emptyState').style.display = 'block';
+    setFaviconState(FAVICON_STATE.IDLE);
 }
 
 function goHome() {

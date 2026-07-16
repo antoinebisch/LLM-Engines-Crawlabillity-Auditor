@@ -28,6 +28,7 @@ It also includes:
 - A **bookmarklet** for one-click auditing from any page
 - **Gate checks** that force the score to `0` when blocking conditions are detected
 - A **loading overlay** showing which check is currently running
+- A **dynamic status favicon** (Gemini-like gradient when idle, orange/yellow while tests run, green when results are ready)
 - Browser history integration for Home / Results state navigation
 
 ---
