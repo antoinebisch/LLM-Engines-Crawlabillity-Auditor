@@ -110,20 +110,29 @@ const DETECTORS = {
         const { content, hasMain } = DETECTORS.getContentArea(html);
         const pRegex = /<p(?=[\s>])[^>]*>([\s\S]*?)<\/p>/gi;
         const matches = content.match(pRegex) || [];
-        const relevantPs = matches.filter(p => {
-            const innerContent = p.replace(/<[^>]*>/g, '').trim();
-            return innerContent.length > 20;
-        });
-        
-        const baseMessage = `Found ${relevantPs.length} paragraph(s) with substantial content`;
+        const relevantPs = matches.filter(p => countWordsInHtmlFragment(p) >= 20);
+
+        const baseMessage = relevantPs.length > 0
+            ? `Found ${relevantPs.length} paragraph(s) with substantial content (20+ words)`
+            : (matches.length > 0
+                ? `Found ${matches.length} paragraph(s), but none reached 20 words`
+                : 'No paragraph tags found');
         const locationMessage = hasMain ? 'inside <main>' : 'inside <body>';
         const warningMessage = !hasMain ? ' (⚠️ no <main> tag found, checked <body> instead)' : '';
+
+        let sourceSnippets;
+        if (relevantPs.length === 0 && matches.length > 0) {
+            sourceSnippets = hasMain
+                ? mainScopedSnippets(html, /<p(?=[\s>])[^>]*>[\s\S]*?<\/p>/gi, null, 6)
+                : regexSnippets(html, /<p(?=[\s>])[^>]*>[\s\S]*?<\/p>/gi, 6);
+        }
         
         return {
             found: relevantPs.length > 0,
             count: relevantPs.length,
             quality: relevantPs.length >= 5 ? 'high' : (relevantPs.length >= 2 ? 'medium' : 'low'),
-            details: `${baseMessage} ${locationMessage}${warningMessage}`
+            details: `${baseMessage} ${locationMessage}${warningMessage}`,
+            sourceSnippets
         };
     },
     headings: (html) => {
@@ -1478,6 +1487,17 @@ function lineNumberAtIndex(text, index) {
     return text.slice(0, index).split(/\r?\n/).length;
 }
 
+function countWordsInHtmlFragment(htmlFragment) {
+    const text = String(htmlFragment || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&[a-z0-9#]+;/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return text ? text.split(/\s+/).length : 0;
+}
+
 function createSourceSnippet(rawHtml, snippet, index) {
     const lineStart = lineNumberAtIndex(rawHtml, index);
     const lineCount = String(snippet || '').split(/\r?\n/).length;
@@ -1623,7 +1643,7 @@ function extractRelevantSourceSnippets(key, rawHtml) {
         case 'headings':
             return mainScopedSnippets(rawHtml, /<h[12][^>]*>[\s\S]*?<\/h[12]>/gi, null, 8);
         case 'relevantParagraphs':
-            return mainScopedSnippets(rawHtml, /<p(?=[\s>])[^>]*>[\s\S]*?<\/p>/gi, (p) => p.replace(/<[^>]*>/g, '').trim().length > 20, 6);
+            return mainScopedSnippets(rawHtml, /<p(?=[\s>])[^>]*>[\s\S]*?<\/p>/gi, (p) => countWordsInHtmlFragment(p) >= 20, 6);
         case 'hyperlinks':
             return mainScopedSnippets(rawHtml, /<a\s+[^>]*href=[^>]*>[\s\S]*?<\/a>/gi, null, 8);
         case 'structuredData': {

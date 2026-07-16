@@ -161,14 +161,16 @@ These checks contribute to the crawlability score. They run after gate checks an
 
 **Weight: 4** | **Impact: High**
 
-**What it checks:** counts `<p>` tags containing substantive text content (more than 20 characters after stripping inner tags).
+**What it checks:** counts `<p>` tags containing substantive text content (at least 20 words after stripping inner tags).
 
 **How it works:**
 - Searches for the `<main>` element first
 - If no `<main>` tag exists, falls back to `<body>` content with `<header>` and `<footer>` elements stripped out
-- Filters `<p>` tags to those with more than 20 characters of visible text
+- Filters `<p>` tags to those with at least 20 words of visible text
 
 **Pass:** at least one relevant paragraph found
+
+**Fail:** no paragraph reaches the 20-word threshold (if `<p>` tags exist, the summary states that and expandable source snippets still show them)
 
 **Quality grading:**
 - `high` — 5 or more qualifying paragraphs
