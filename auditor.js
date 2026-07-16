@@ -369,7 +369,7 @@ const DETECTORS = {
         };
     },
     breadcrumbs: (html) => {
-        const breadcrumbPattern = /<(?:nav[^>]*)?[^>]*class=['"]?[^'"]*breadcrumb/gi;
+        const breadcrumbPattern = /<[^>]*\b(?:class|id)\s*=\s*['"]?[^'">]*breadcrumb[^'">]*['"]?[^>]*>/gi;
         const match = html.match(breadcrumbPattern);
         return {
             found: !!match,
@@ -1652,7 +1652,7 @@ function extractRelevantSourceSnippets(key, rawHtml) {
             return [...jsonLd, ...microdata].slice(0, 8);
         }
         case 'breadcrumbs':
-            return regexSnippets(rawHtml, /<(?:nav[^>]*)?[^>]*class=['"]?[^'"]*breadcrumb[^>]*>/gi, 4);
+            return regexSnippets(rawHtml, /<[^>]*\b(?:class|id)\s*=\s*['"]?[^'">]*breadcrumb[^'">]*['"]?[^>]*>/gi, 4);
         case 'sitemaps':
             return regexSnippets(rawHtml, /<link[^>]*href=['"]([^'">\s]*sitemap[^'">\s]*)['"]?[^>]*>/gi, 4);
         case 'noindexGate':

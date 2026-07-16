@@ -265,10 +265,10 @@ These checks contribute to the crawlability score. They run after gate checks an
 **What it checks:** looks for breadcrumb navigation patterns anywhere in the HTML.
 
 **How it works:**
-- Matches elements where the `class` attribute contains the substring `breadcrumb` (case-insensitive)
-- Covers common patterns such as `<nav class="breadcrumb">`, `<ol class="breadcrumbs">`, `<div class="breadcrumb-wrapper">`, etc.
+- Matches elements where the `class` **or** `id` attribute contains the substring `breadcrumb` (case-insensitive)
+- Covers common patterns such as `<nav class="breadcrumb">`, `<ol class="breadcrumbs">`, `<div class="breadcrumb-wrapper">`, `<nav id="breadcrumb">`, etc.
 
-**Pass:** at least one element with a class matching `breadcrumb` is found
+**Pass:** at least one element with a `class` or `id` matching `breadcrumb` is found
 
 **Fail:** no breadcrumb pattern detected
 
