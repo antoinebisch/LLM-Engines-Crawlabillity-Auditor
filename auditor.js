@@ -87,36 +87,64 @@ const DETECTORS = {
         const mainMatch = html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i);
         return mainMatch ? mainMatch[1] : '';
     },
+    getContentArea: (html) => {
+        // First try <main> tag
+        const mainMatch = html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i);
+        if (mainMatch && mainMatch[1]) {
+            return { content: mainMatch[1], hasMain: true };
+        }
+        
+        // Fallback to <body> but exclude header and footer
+        const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        if (bodyMatch && bodyMatch[1]) {
+            let bodyContent = bodyMatch[1];
+            // Remove header and footer elements
+            bodyContent = bodyContent.replace(/<header\b[^>]*>([\s\S]*?)<\/header>/gi, '');
+            bodyContent = bodyContent.replace(/<footer\b[^>]*>([\s\S]*?)<\/footer>/gi, '');
+            return { content: bodyContent, hasMain: false };
+        }
+        
+        return { content: '', hasMain: false };
+    },
     relevantParagraphs: (html) => {
-        const mainContent = DETECTORS.mainContent(html);
+        const { content, hasMain } = DETECTORS.getContentArea(html);
         const pRegex = /<p(?=[\s>])[^>]*>([\s\S]*?)<\/p>/gi;
-        const matches = mainContent.match(pRegex) || [];
+        const matches = content.match(pRegex) || [];
         const relevantPs = matches.filter(p => {
-            const content = p.replace(/<[^>]*>/g, '').trim();
-            return content.length > 20;
+            const innerContent = p.replace(/<[^>]*>/g, '').trim();
+            return innerContent.length > 20;
         });
+        
+        const baseMessage = `Found ${relevantPs.length} paragraph(s) with substantial content`;
+        const locationMessage = hasMain ? 'inside <main>' : 'inside <body>';
+        const warningMessage = !hasMain ? ' (⚠️ no <main> tag found, checked <body> instead)' : '';
+        
         return {
             found: relevantPs.length > 0,
             count: relevantPs.length,
             quality: relevantPs.length >= 5 ? 'high' : (relevantPs.length >= 2 ? 'medium' : 'low'),
-            details: `Found ${relevantPs.length} paragraph(s) with substantial content inside <main>`
+            details: `${baseMessage} ${locationMessage}${warningMessage}`
         };
     },
     headings: (html) => {
-        const mainContent = DETECTORS.mainContent(html);
+        const { content, hasMain } = DETECTORS.getContentArea(html);
         const h1Regex = /<h1[^>]*>([\s\S]*?)<\/h1>/gi;
         const h2Regex = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
-        const h1Matches = mainContent.match(h1Regex) || [];
-        const h2Matches = mainContent.match(h2Regex) || [];
+        const h1Matches = content.match(h1Regex) || [];
+        const h2Matches = content.match(h2Regex) || [];
         const total = h1Matches.length + h2Matches.length;
         const exactlyOneH1 = h1Matches.length === 1;
+        
+        const locationMessage = hasMain ? 'inside <main>' : 'inside <body>';
+        const warningMessage = !hasMain ? ' (⚠️ no <main> tag found, checked <body> instead)' : '';
+        
         return {
             found: exactlyOneH1,
             count: total,
             quality: exactlyOneH1 ? 'high' : 'low',
             details: exactlyOneH1
-                ? `Found exactly 1 <h1> and ${h2Matches.length} <h2> tag(s) inside <main>`
-                : `Expected exactly 1 <h1> inside <main>; found ${h1Matches.length}`
+                ? `Found exactly 1 <h1> and ${h2Matches.length} <h2> tag(s) ${locationMessage}${warningMessage}`
+                : `Expected exactly 1 <h1> ${locationMessage}; found ${h1Matches.length}${warningMessage}`
         };
     },
     title: (html) => {
@@ -130,15 +158,19 @@ const DETECTORS = {
         };
     },
     hyperlinks: (html) => {
-        const mainContent = DETECTORS.mainContent(html);
+        const { content, hasMain } = DETECTORS.getContentArea(html);
         const linkRegex = /<a\s+[^>]*href=[^>]*>/gi;
-        const matches = mainContent.match(linkRegex) || [];
+        const matches = content.match(linkRegex) || [];
         const internalLinks = matches.filter(link => !link.match(/href=['"]https?:\/\//i));
+        
+        const locationMessage = hasMain ? 'inside <main>' : 'inside <body>';
+        const warningMessage = !hasMain ? ' (⚠️ no <main> tag found, checked <body> instead)' : '';
+        
         return {
             found: matches.length > 0,
             count: matches.length,
             quality: internalLinks.length > 0 ? 'high' : 'medium',
-            details: `Found ${matches.length} link(s) inside <main>, ${internalLinks.length} internal`
+            details: `Found ${matches.length} link(s) ${locationMessage}, ${internalLinks.length} internal${warningMessage}`
         };
     },
     structuredData: (html) => {
