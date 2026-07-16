@@ -344,8 +344,8 @@ const DETECTORS = {
                 found: true,
                 count: 1,
                 quality: 'medium',
-                summary: 'Warning: canonical URL points to base URL without parameters',
-                details: `Warning: canonical URL points to base URL without parameters. Tested URL: ${targetUrl}. Canonical: ${resolvedCanonicalUrl}`,
+                summary: '⚠️ Canonical URL points to base URL without parameters',
+                details: `⚠️ Canonical URL points to base URL without parameters. Tested URL: ${targetUrl}. Canonical: ${resolvedCanonicalUrl}`,
                 links: [resolvedCanonicalUrl]
             };
         }
