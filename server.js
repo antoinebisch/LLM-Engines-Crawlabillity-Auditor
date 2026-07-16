@@ -5,8 +5,22 @@ const path = require('path');
 const fs = require('fs');
 
 const PORT = 3000;
-const DEFAULT_CRAWLER_USER_AGENT = 'SeLlmCrawl/1.0 (+https://github.com/antoinebisch/LLM-Engines-Crawlabillity-Auditor) Mozilla/5.0 (compatible; LLM-Crawlability-Auditor)';
-const CRAWLER_USER_AGENT = (process.env.CRAWLER_USER_AGENT || DEFAULT_CRAWLER_USER_AGENT).trim();
+const SE_COM_USER_AGENT = 'SeLlmCrawl/1.0 (+https://github.com/antoinebisch/LLM-Engines-Crawlabillity-Auditor) Mozilla/5.0 (compatible; LLM-Crawlability-Auditor)';
+const GENERIC_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
+const DEFAULT_CRAWLER_USER_AGENT = (process.env.CRAWLER_USER_AGENT || SE_COM_USER_AGENT).trim();
+
+function getUAForUrl(targetUrl) {
+    try {
+        const parsed = new URL(targetUrl);
+        const hostname = parsed.hostname || '';
+        if (hostname.includes('se.com')) {
+            return SE_COM_USER_AGENT;
+        }
+    } catch (e) {
+        // ignore parsing errors
+    }
+    return GENERIC_USER_AGENT;
+}
 
 function escapeForSingleQuotedJsString(value) {
     return String(value)
@@ -21,13 +35,14 @@ function fetchUrl(targetUrl, callback, redirectCount = 0, retryCount = 0) {
     try {
         const parsed = new URL(targetUrl);
         const protocol = parsed.protocol === 'https:' ? https : http;
+        const userAgent = getUAForUrl(targetUrl);
         
         const options = {
             hostname: parsed.hostname,
             path: parsed.pathname + parsed.search,
             method: 'GET',
             headers: {
-                'User-Agent': CRAWLER_USER_AGENT,
+                'User-Agent': userAgent,
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
@@ -271,10 +286,11 @@ const server = http.createServer((req, res) => {
             if (err) {
                 (async () => {
                     try {
+                        const userAgent = getUAForUrl(targetUrl);
                         const fallbackResp = await fetch(targetUrl, {
                             redirect: 'follow',
                             headers: {
-                                'User-Agent': CRAWLER_USER_AGENT,
+                                'User-Agent': userAgent,
                                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                                 'Accept-Language': 'en-US,en;q=0.9'
                             }
