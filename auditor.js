@@ -31,12 +31,6 @@ const AUDIT_ELEMENTS = {
         description: 'Machine-readable code classifying content',
         impact: 'High - Powerful for LLMs. Direct extraction of facts, pricing, and reviews.'
     },
-    canonical: {
-        name: 'Canonical tag',
-        weight: 3,
-        description: 'Specifies the preferred version of a page',
-        impact: 'Moderate-High - Identifies source of truth for citations and deduplication.'
-    },
     breadcrumbs: {
         name: 'Breadcrumbs',
         weight: 3,
@@ -76,6 +70,13 @@ const GATE_ELEMENTS = {
         weight: 0,
         description: 'Checks for noindex directives in meta robots or X-Robots-Tag',
         impact: 'Critical - noindex prevents this page from being used for indexing/citations.',
+        isGate: true
+    },
+    canonicalGate: {
+        name: 'Canonical tag gate check',
+        weight: 0,
+        description: 'Checks that canonical tag matches the tested URL',
+        impact: 'Critical - Canonical mismatch indicates wrong page version is being tested.',
         isGate: true
     }
 };
@@ -192,7 +193,7 @@ const DETECTORS = {
             itemTree: hierarchy
         };
     },
-    canonical: (html) => {
+    canonical: (html, context = {}) => {
         // Find all canonical tags anywhere in the document
         const allCanonicals = [...html.matchAll(/<link[^>]*rel=['"]?canonical['"]?[^>]*>/gi)];
 
@@ -203,11 +204,24 @@ const DETECTORS = {
 
         const totalCount = allCanonicals.length;
         const inHeadCount = headCanonicals.length;
-        const outOfHeadCount = totalCount - inHeadCount;
 
         const canonicalHref = allCanonicals.length > 0
             ? (allCanonicals[0][0].match(/href=['"]([^'"]+)['"]/i)?.[1] || '')
             : '';
+
+        const targetUrl = String(context.targetUrl || '').trim();
+
+        const toBaseComparableUrl = (input) => {
+            try {
+                const u = new URL(String(input || '').trim());
+                u.hash = '';
+                u.search = '';
+                const normalized = u.href;
+                return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+            } catch {
+                return '';
+            }
+        };
 
         // Fail conditions
         if (totalCount === 0) {
@@ -246,12 +260,71 @@ const DETECTORS = {
             };
         }
 
+        if (!canonicalHref) {
+            return {
+                found: false,
+                count: 1,
+                quality: 'low',
+                summary: 'Canonical tag missing href',
+                details: 'Canonical tag is present but href is missing or empty.',
+                links: []
+            };
+        }
+
+        const resolvedCanonicalUrl = normalizeUrl(targetUrl || canonicalHref, canonicalHref) || canonicalHref;
+        const normalizedCanonicalUrl = normalizeComparableUrl(resolvedCanonicalUrl);
+
+        if (!targetUrl) {
+            return {
+                found: true,
+                count: 1,
+                quality: 'medium',
+                summary: 'Canonical present (target URL not provided)',
+                details: `Canonical tag present in <head>, but tested URL was not provided so URL match could not be validated. Canonical: ${resolvedCanonicalUrl}`,
+                links: resolvedCanonicalUrl ? [resolvedCanonicalUrl] : []
+            };
+        }
+
+        const normalizedTargetUrl = normalizeComparableUrl(targetUrl);
+        const targetBaseUrl = toBaseComparableUrl(targetUrl);
+        const canonicalBaseUrl = toBaseComparableUrl(resolvedCanonicalUrl);
+        const hasParams = (() => {
+            try {
+                return new URL(targetUrl).search.length > 0;
+            } catch {
+                return false;
+            }
+        })();
+
+        if (normalizedCanonicalUrl && normalizedTargetUrl && normalizedCanonicalUrl === normalizedTargetUrl) {
+            return {
+                found: true,
+                count: 1,
+                quality: 'high',
+                summary: 'Canonical URL matches tested URL',
+                details: `Canonical tag present in <head> and matches tested URL: ${resolvedCanonicalUrl}`,
+                links: [resolvedCanonicalUrl]
+            };
+        }
+
+        if (hasParams && canonicalBaseUrl && targetBaseUrl && canonicalBaseUrl === targetBaseUrl) {
+            return {
+                found: true,
+                count: 1,
+                quality: 'medium',
+                summary: 'Warning: canonical URL points to base URL without parameters',
+                details: `Warning: canonical URL points to base URL without parameters. Tested URL: ${targetUrl}. Canonical: ${resolvedCanonicalUrl}`,
+                links: [resolvedCanonicalUrl]
+            };
+        }
+
         return {
-            found: true,
+            found: false,
             count: 1,
-            quality: 'high',
-            details: `Canonical tag present in <head>`,
-            links: canonicalHref ? [canonicalHref] : []
+            quality: 'low',
+            summary: 'Canonical URL does not match tested URL',
+            details: `Canonical URL does not match tested URL. Tested URL: ${targetUrl}. Canonical: ${resolvedCanonicalUrl}`,
+            links: [resolvedCanonicalUrl]
         };
     },
     breadcrumbs: (html) => {
@@ -992,8 +1065,23 @@ async function runGateChecks({ htmlContent, targetUrl, responseHeaders, onProgre
         details: noindexDetails
     };
 
+    // Gate 3: canonical URL validity (must pass canonical detector)
+    reportProgress('Checking canonical gate...');
+    const canonicalGateResult = DETECTORS.canonical(htmlContent, { targetUrl });
+    const canonicalPass = !!canonicalGateResult?.found;
+    let canonicalDetails = canonicalGateResult?.details || 'Canonical check failed.';
+
+    results.canonicalGate = {
+        ...GATE_ELEMENTS.canonicalGate,
+        found: canonicalPass,
+        count: canonicalPass ? 1 : 0,
+        quality: canonicalPass ? (canonicalGateResult?.quality || 'high') : 'low',
+        details: canonicalDetails,
+        ...canonicalGateResult
+    };
+
     return {
-        allPassed: robotsPass && noindexPass,
+        allPassed: robotsPass && noindexPass && canonicalPass,
         results,
         robotsTxtContent
     };
